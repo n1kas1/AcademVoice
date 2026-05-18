@@ -1,0 +1,39 @@
+name: academ-voice
+
+# БД живёт во внешнем Supabase — поднимаем только API и Caddy.
+# DATABASE_URL должен указывать на Supabase Session-pooler.
+
+services:
+  api:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      DATABASE_URL: ${DATABASE_URL}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      LIVEKIT_WS_URL: ${LIVEKIT_WS_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      API_DOMAIN: ${API_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+volumes:
+  caddy_data:
+  caddy_config:

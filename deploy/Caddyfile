@@ -1,0 +1,18 @@
+# Caddy конфиг с автоматическим HTTPS через Let's Encrypt.
+# API_DOMAIN — берётся из .env. Например: api.academvoice.ru
+# Caddy сам получит сертификат при первом запуске, перезапускать не надо.
+
+{$API_DOMAIN} {
+    encode zstd gzip
+
+    @cors_preflight method OPTIONS
+    handle @cors_preflight {
+        respond 204
+    }
+
+    reverse_proxy api:8000 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}
