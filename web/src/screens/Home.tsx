@@ -1,6 +1,7 @@
 import { useStore } from "../lib/store";
 import { apiJoinQueue } from "../lib/api";
 import WebApp from "@twa-dev/sdk";
+import Footer from "../components/Footer";
 
 export default function Home() {
   const profile = useStore((s) => s.profile);
@@ -56,6 +57,8 @@ export default function Home() {
       <div className="text-xs text-muted text-center">
         Правила: будь вежлив, не записывай разговор, не вытаскивай личных данных.
       </div>
+
+      <Footer />
     </div>
   );
 }

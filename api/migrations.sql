@@ -10,6 +10,9 @@ create table if not exists users (
   updated_at   timestamptz not null default now()
 );
 
+-- Юзер один раз согласился с правилами — больше Rules-экран ему не показываем.
+alter table users add column if not exists rules_accepted_at timestamptz;
+
 create table if not exists queue (
   tg_id        bigint primary key references users(tg_id) on delete cascade,
   joined_at    timestamptz not null default now()

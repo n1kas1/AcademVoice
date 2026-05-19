@@ -29,12 +29,16 @@ export interface MeResponse {
   first_name: string;
   faculty?: string;
   course?: string;
+  rules_accepted: boolean;
 }
 
 export const apiMe = () => req<MeResponse>("/me");
 
 export const apiUpdateProfile = (p: { faculty: string; course: string }) =>
   req<MeResponse>("/me", { method: "PATCH", body: JSON.stringify(p) });
+
+export const apiAcceptRules = () =>
+  req<MeResponse>("/me/accept-rules", { method: "POST" });
 
 // === Matching ===
 

@@ -149,16 +149,22 @@ class ProfilePatch(BaseModel):
     course: str
 
 
-@app.get("/me")
-async def me(u: TgUser = Depends(get_user)):
-    row = await upsert_user(u)
+def _me_payload(row: dict) -> dict:
     return {
         "tg_id": row["tg_id"],
         "username": row.get("username"),
         "first_name": row["first_name"],
         "faculty": row.get("faculty"),
         "course": row.get("course"),
+        # Bool-флаг достаточен фронту для роутинга, точную дату не отдаём.
+        "rules_accepted": row.get("rules_accepted_at") is not None,
     }
+
+
+@app.get("/me")
+async def me(u: TgUser = Depends(get_user)):
+    row = await upsert_user(u)
+    return _me_payload(row)
 
 
 @app.patch("/me")
@@ -170,13 +176,25 @@ async def update_me(p: ProfilePatch, u: TgUser = Depends(get_user)):
             u.id, p.faculty, p.course,
         )
     row = await get_user_row(u.id)
-    return {
-        "tg_id": row["tg_id"],
-        "username": row.get("username"),
-        "first_name": row["first_name"],
-        "faculty": row.get("faculty"),
-        "course": row.get("course"),
-    }
+    return _me_payload(row)
+
+
+@app.post("/me/accept-rules")
+async def accept_rules(u: TgUser = Depends(get_user)):
+    """Юзер согласился с правилами. Идемпотентно, не перезаписывает дату."""
+    await upsert_user(u)
+    async with pool().acquire() as c:
+        await c.execute(
+            """
+            update users
+               set rules_accepted_at = coalesce(rules_accepted_at, now()),
+                   updated_at        = now()
+             where tg_id = $1
+            """,
+            u.id,
+        )
+    row = await get_user_row(u.id)
+    return _me_payload(row)
 
 
 # ============ /match ============

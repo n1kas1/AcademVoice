@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 export type Screen =
   | "splash"
+  | "rules"
   | "profile"
   | "home"
   | "searching"
@@ -14,6 +15,7 @@ export interface Profile {
   firstName: string;
   faculty?: string;
   course?: string;
+  rulesAccepted?: boolean;
 }
 
 export interface CallSession {

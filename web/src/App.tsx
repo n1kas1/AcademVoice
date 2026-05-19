@@ -3,6 +3,7 @@ import WebApp from "@twa-dev/sdk";
 import { useStore } from "./lib/store";
 import { apiMe } from "./lib/api";
 import Splash from "./screens/Splash";
+import Rules from "./screens/Rules";
 import Profile from "./screens/Profile";
 import Home from "./screens/Home";
 import Searching from "./screens/Searching";
@@ -30,9 +31,14 @@ export default function App() {
           firstName: me.first_name,
           faculty: me.faculty,
           course: me.course,
+          rulesAccepted: me.rules_accepted,
         });
-        // Если факультет/курс не заполнен — отправляем на онбординг.
-        if (!me.faculty || !me.course) setScreen("profile");
+        // Маршрутизация:
+        //   правила не приняты      → Rules
+        //   приняты, но без анкеты  → Profile
+        //   всё заполнено           → Home
+        if (!me.rules_accepted) setScreen("rules");
+        else if (!me.faculty || !me.course) setScreen("profile");
         else setScreen("home");
       })
       .catch((err) => {
@@ -43,14 +49,16 @@ export default function App() {
           tgId: u?.id ?? 0,
           username: u?.username,
           firstName: u?.first_name ?? "Гость",
+          rulesAccepted: false,
         });
-        setScreen("profile");
+        setScreen("rules");
       });
   }, [setScreen, setProfile]);
 
   return (
     <div className="min-h-full bg-bg text-fg flex flex-col">
       {screen === "splash" && <Splash />}
+      {screen === "rules" && <Rules />}
       {screen === "profile" && <Profile />}
       {screen === "home" && <Home />}
       {screen === "searching" && <Searching />}
