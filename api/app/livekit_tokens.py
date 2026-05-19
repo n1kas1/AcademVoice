@@ -3,6 +3,7 @@
 Доки: https://docs.livekit.io/home/server/generating-tokens/
 """
 
+from datetime import timedelta
 from livekit import api
 from .config import LIVEKIT_API_KEY, LIVEKIT_API_SECRET
 
@@ -20,6 +21,6 @@ def make_token(identity: str, room_name: str, name: str) -> str:
         .with_identity(identity)
         .with_name(name)
         .with_grants(grants)
-        .with_ttl(60 * 60)  # 1h
+        .with_ttl(timedelta(hours=1))
     )
     return token.to_jwt()

@@ -4,7 +4,8 @@
 
 import WebApp from "@twa-dev/sdk";
 
-const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+// Бэк и фронт живут на одном Caddy: same-origin, fetch идёт по относительному пути.
+const BASE = import.meta.env.VITE_API_URL ?? "";
 
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   const initData = WebApp.initData || "";

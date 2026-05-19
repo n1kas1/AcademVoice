@@ -1,7 +1,9 @@
 name: academ-voice
 
-# БД живёт во внешнем Supabase — поднимаем только API и Caddy.
-# DATABASE_URL должен указывать на Supabase Session-pooler.
+# Архитектура:
+# - api  : FastAPI на 8000 (внутренний)
+# - web  : Caddy 2 со статикой Vite-фронта + проксированием бэк-эндпоинтов
+# - БД   : внешний Supabase (через DATABASE_URL)
 
 services:
   api:
@@ -19,8 +21,10 @@ services:
     expose:
       - "8000"
 
-  caddy:
-    image: caddy:2-alpine
+  web:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
     restart: always
     ports:
       - "80:80"
@@ -28,7 +32,6 @@ services:
     environment:
       API_DOMAIN: ${API_DOMAIN}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
