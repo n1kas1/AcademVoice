@@ -6,7 +6,8 @@
     encode zstd gzip
 
     # Эндпоинты бэка — проксируем по их реальным путям без перепрефикса.
-    @api path /me /match/* /call/* /health
+    # /me/* нужен для /me/accept-rules; /stats — для соц-пруфа на Searching.
+    @api path /me /me/* /match/* /call/* /health /stats
     handle @api {
         reverse_proxy api:8000 {
             header_up X-Real-IP {remote_host}
