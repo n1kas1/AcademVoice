@@ -25,6 +25,10 @@ export interface CallSession {
   peerCourse?: string;
   peerTgId: number;
   peerUsername?: string;
+  // Состояние взаимной симпатии — заполняется когда апи отдаёт mutual=true
+  // (либо во время звонка, либо при перепроверке на экране AfterCall).
+  mutual?: boolean;
+  mutualUsername?: string;
 }
 
 interface State {

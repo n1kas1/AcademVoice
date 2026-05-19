@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import WebApp from "@twa-dev/sdk";
 import { useStore } from "../lib/store";
 import { joinCall, type CallHandle } from "../lib/livekit";
-import { apiSkip, apiReport } from "../lib/api";
+import { apiSkip, apiReport, apiLike } from "../lib/api";
 
 export default function Call() {
   const call = useStore((s) => s.call);
+  const setCall = useStore((s) => s.setCall);
   const setScreen = useStore((s) => s.setScreen);
 
   const handleRef = useRef<CallHandle | null>(null);
@@ -14,6 +15,8 @@ export default function Call() {
   const [secs, setSecs] = useState(0);
   const [muted, setMuted] = useState(false);
   const [connecting, setConnecting] = useState(true);
+  const [liked, setLiked] = useState(false); // нажал ли я сердечко
+  const [pulsing, setPulsing] = useState(false); // анимация после нажатия
 
   useEffect(() => {
     if (!call) return;
@@ -27,9 +30,13 @@ export default function Call() {
           (el) => {
             peerAudioRef.current = el;
           },
-          () => {
-            // peer disconnected — переводим на after-call
-            if (alive) setScreen("aftercall");
+          async () => {
+            // peer ушёл — закроем звонок и перейдём на after-call
+            if (!alive) return;
+            try {
+              await apiSkip(call.roomName);
+            } catch {}
+            setScreen("aftercall");
           }
         );
         if (!alive) {
@@ -59,16 +66,17 @@ export default function Call() {
 
   if (!call) return null;
 
-  const next = async () => {
+  const finish = async (intent: "skip" | "end") => {
+    // В обоих случаях фиксируем ended_at, чтобы аналитика считалась.
     try {
       await apiSkip(call.roomName);
     } catch {}
     setScreen("aftercall");
+    void intent; // intent пока не различаем поведенчески
   };
 
-  const end = async () => {
-    setScreen("aftercall");
-  };
+  const next = () => finish("skip");
+  const end = () => finish("end");
 
   const toggleMute = async () => {
     const m = !muted;
@@ -83,8 +91,30 @@ export default function Call() {
         await apiReport(call.roomName, "user_report");
       } catch {}
       WebApp.showAlert("Принято. Спасибо.");
-      setScreen("aftercall");
+      await finish("end");
     });
+  };
+
+  // Невидимое сердечко: peer не узнает, что я нажал. Если он тоже нажал —
+  // на AfterCall будет mutual + обмен @username.
+  const sendLike = async () => {
+    if (liked) return;
+    setLiked(true);
+    setPulsing(true);
+    setTimeout(() => setPulsing(false), 600);
+    try {
+      const r = await apiLike(call.roomName);
+      // Сохраняем mutual, чтобы AfterCall показал его без задержки.
+      if (r.mutual) {
+        setCall({
+          ...call,
+          mutual: true,
+          mutualUsername: r.peer_username,
+        });
+      }
+    } catch {
+      // молча — пользователю незачем знать о сетевых ошибках по сердечку
+    }
   };
 
   const mm = String(Math.floor(secs / 60)).padStart(2, "0");
@@ -93,8 +123,12 @@ export default function Call() {
   return (
     <div className="flex-1 flex flex-col p-6 gap-4">
       <div className="flex items-center justify-between">
-        <div className="text-sm text-muted">{connecting ? "Соединение…" : "В эфире"}</div>
-        <div className="text-sm tabular-nums">{mm}:{ss}</div>
+        <div className="text-sm text-muted">
+          {connecting ? "Соединение…" : "В эфире"}
+        </div>
+        <div className="text-sm tabular-nums">
+          {mm}:{ss}
+        </div>
         <button onClick={report} className="text-xs text-muted underline">
           Жалоба
         </button>
@@ -108,6 +142,27 @@ export default function Call() {
         <div className="text-muted text-sm text-center">
           {call.peerFaculty}
           {call.peerCourse && ` · ${call.peerCourse}`}
+        </div>
+
+        {/* Сердечко — большая отдельная кнопка по центру */}
+        <button
+          onClick={sendLike}
+          disabled={liked}
+          className={`mt-6 w-20 h-20 rounded-full flex items-center justify-center text-4xl transition-transform ${
+            pulsing ? "scale-125" : "scale-100"
+          } ${
+            liked
+              ? "bg-red-500/30 ring-2 ring-red-500"
+              : "bg-white/5 active:scale-95"
+          }`}
+          aria-label="Отправить сердечко"
+        >
+          {liked ? "❤️" : "🤍"}
+        </button>
+        <div className="text-xs text-muted text-center max-w-[18rem]">
+          {liked
+            ? "Сердечко отправлено. Если собеседник тоже нажмёт — обменяетесь контактами."
+            : "Понравился собеседник? Тапни сердечко — он не увидит."}
         </div>
       </div>
 

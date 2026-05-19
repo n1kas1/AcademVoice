@@ -33,6 +33,18 @@ from .livekit_tokens import make_token
 # заменим на Postgres advisory lock.
 _match_lock = asyncio.Lock()
 
+# Записи старше этого срока — выбрасываем из очереди, считая что вкладка закрылась.
+QUEUE_TTL_SECONDS = 60
+
+
+async def _clean_stale_queue() -> None:
+    """Удаляем зависшие записи (юзер закрыл вкладку, не позвав /match/leave)."""
+    async with pool().acquire() as c:
+        await c.execute(
+            "delete from queue where joined_at < now() - make_interval(secs => $1)",
+            QUEUE_TTL_SECONDS,
+        )
+
 
 def get_user(authorization: str = Header(default="")) -> TgUser:
     try:
@@ -172,6 +184,7 @@ async def update_me(p: ProfilePatch, u: TgUser = Depends(get_user)):
 @app.post("/match/join")
 async def match_join(u: TgUser = Depends(get_user)):
     await upsert_user(u)
+    await _clean_stale_queue()
 
     async with _match_lock:
         # Уже в активной комнате? (например, peer встал и матчнул нас раньше)
@@ -224,6 +237,12 @@ async def match_join(u: TgUser = Depends(get_user)):
 
 @app.get("/match/poll")
 async def match_poll(u: TgUser = Depends(get_user)):
+    # Каждый поллинг продляем TTL текущего юзера + чистим зомби.
+    await _clean_stale_queue()
+    async with pool().acquire() as c:
+        await c.execute(
+            "update queue set joined_at = now() where tg_id = $1", u.id
+        )
     active = await find_active_call(u.id)
     if active:
         async with pool().acquire() as c:
@@ -310,6 +329,56 @@ async def call_report(body: ReportBody, u: TgUser = Depends(get_user)):
             body.room_name, u.id, body.reason,
         )
     return {"ok": True}
+
+
+# ============ /stats ============
+
+@app.get("/stats")
+async def stats(u: TgUser = Depends(get_user)):
+    """Соц-пруф для экрана Searching: сколько народу в очереди и сколько
+    звонков было за последний час."""
+    await _clean_stale_queue()
+    async with pool().acquire() as c:
+        q_size = await c.fetchval("select count(*) from queue")
+        calls_hour = await c.fetchval(
+            "select count(*) from calls where started_at > now() - interval '1 hour'"
+        )
+        users_24h = await c.fetchval(
+            "select count(*) from users where updated_at > now() - interval '24 hours'"
+        )
+    return {
+        "queue_size": int(q_size or 0),
+        "calls_last_hour": int(calls_hour or 0),
+        "active_24h": int(users_24h or 0),
+    }
+
+
+# Результат разговора — клиент опрашивает после звонка, чтобы понять,
+# случился ли мьютуал. peer мог нажать сердечко уже после нашего ухода.
+@app.get("/call/{room_name}/result")
+async def call_result(room_name: str, u: TgUser = Depends(get_user)):
+    async with pool().acquire() as c:
+        rs = await c.fetch(
+            "select * from reactions where room_name=$1", room_name
+        )
+        call = await c.fetchrow(
+            "select * from calls where room_name=$1", room_name
+        )
+    if not call:
+        raise HTTPException(404, "call not found")
+    call = dict(call)
+    # участник?
+    if u.id not in (call["a_tg_id"], call["b_tg_id"]):
+        raise HTTPException(403, "not your call")
+
+    if (
+        len(rs) == 2
+        and all(r["reaction"] == "like" for r in rs)
+        and all(r["save_contact"] for r in rs)
+    ):
+        p = await peer_info(call, u.id)
+        return {"mutual": True, "peer_username": p.get("username"), "peer_first_name": p.get("first_name")}
+    return {"mutual": False}
 
 
 # ============ health ============

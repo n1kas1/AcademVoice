@@ -66,29 +66,42 @@ export const apiSkip = (roomName: string) =>
     body: JSON.stringify({ room_name: roomName }),
   });
 
-// === After-call ===
+// === Сердечко во время звонка ===
 
-export interface ReactionResponse {
+export interface LikeResponse {
   mutual: boolean;
   peer_username?: string;
+  peer_first_name?: string;
 }
 
-export const apiReact = (
-  roomName: string,
-  reaction: "like" | "dislike",
-  saveContact: boolean
-) =>
-  req<ReactionResponse>("/call/reaction", {
+// Отправить "сердечко" собеседнику. Если оба нажали — обмен @username.
+// peer этого вызова не видит — никакого социального давления.
+export const apiLike = (roomName: string) =>
+  req<LikeResponse>("/call/reaction", {
     method: "POST",
     body: JSON.stringify({
       room_name: roomName,
-      reaction,
-      save_contact: saveContact,
+      reaction: "like",
+      save_contact: true,
     }),
   });
+
+// На AfterCall — повторно проверяем, не нажал ли peer сердечко уже после нас.
+export const apiCallResult = (roomName: string) =>
+  req<LikeResponse>(`/call/${encodeURIComponent(roomName)}/result`);
 
 export const apiReport = (roomName: string, reason: string) =>
   req<{ ok: true }>("/call/report", {
     method: "POST",
     body: JSON.stringify({ room_name: roomName, reason }),
   });
+
+// === Соц-пруф для Searching ===
+
+export interface StatsResponse {
+  queue_size: number;
+  calls_last_hour: number;
+  active_24h: number;
+}
+
+export const apiStats = () => req<StatsResponse>("/stats");

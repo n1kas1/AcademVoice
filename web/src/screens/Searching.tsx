@@ -1,14 +1,28 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore } from "../lib/store";
-import { apiPoll, apiLeaveQueue } from "../lib/api";
+import { apiPoll, apiLeaveQueue, apiStats, type StatsResponse } from "../lib/api";
 
 export default function Searching() {
   const setScreen = useStore((s) => s.setScreen);
   const setCall = useStore((s) => s.setCall);
   const timer = useRef<number | null>(null);
+  const [stats, setStats] = useState<StatsResponse | null>(null);
+  const [waitSec, setWaitSec] = useState(0);
 
   useEffect(() => {
     let alive = true;
+
+    // Тикалка ожидания, чтобы юзеру было видно сколько он стоит в очереди.
+    const wt = window.setInterval(() => setWaitSec((s) => s + 1), 1000);
+
+    // Дёргаем /stats раз в 5 секунд параллельно с поллом матчинга.
+    const refreshStats = () => {
+      apiStats()
+        .then((s) => alive && setStats(s))
+        .catch(() => {});
+    };
+    refreshStats();
+    const st = window.setInterval(refreshStats, 5000);
 
     const tick = async () => {
       if (!alive) return;
@@ -36,8 +50,11 @@ export default function Searching() {
     };
 
     timer.current = window.setTimeout(tick, 1500);
+
     return () => {
       alive = false;
+      clearInterval(wt);
+      clearInterval(st);
       if (timer.current) clearTimeout(timer.current);
     };
   }, [setScreen, setCall]);
@@ -49,6 +66,10 @@ export default function Searching() {
     setScreen("home");
   };
 
+  const hint = waitSec > 30
+    ? "Народу сейчас мало — попробуй через пару минут или поделись ссылкой 👇"
+    : "Обычно это занимает несколько секунд.";
+
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-6 p-8">
       <div className="relative">
@@ -58,9 +79,26 @@ export default function Searching() {
         </div>
       </div>
       <div className="text-xl font-semibold">Ищем собеседника…</div>
-      <div className="text-muted text-center max-w-xs text-sm">
-        Обычно это занимает несколько секунд. Жди или нажми отмену.
-      </div>
+
+      {stats && (
+        <div className="text-sm text-muted text-center max-w-xs">
+          <div>
+            В очереди сейчас{" "}
+            <span className="text-fg font-semibold">{stats.queue_size}</span>{" "}
+            {plural(stats.queue_size, "человек", "человека", "человек")}
+          </div>
+          <div className="mt-1">
+            За час прошло{" "}
+            <span className="text-fg font-semibold">
+              {stats.calls_last_hour}
+            </span>{" "}
+            {plural(stats.calls_last_hour, "звонок", "звонка", "звонков")}
+          </div>
+        </div>
+      )}
+
+      <div className="text-muted text-center max-w-xs text-sm">{hint}</div>
+
       <button
         onClick={cancel}
         className="mt-4 text-muted underline underline-offset-4"
@@ -69,4 +107,14 @@ export default function Searching() {
       </button>
     </div>
   );
+}
+
+// Русские склонения по числу. Лучше чем "2 человеков".
+function plural(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
 }
