@@ -43,7 +43,7 @@ export default function Home() {
       <div className="flex-1 flex flex-col items-center justify-center gap-6">
         <div className="text-7xl">🎙</div>
         <div className="text-center text-muted max-w-xs">
-          Жми — мы найдём собеседника из ВШЭ и соединим вас по голосу.
+          Жми — мы найдём собеседника из Академии и соединим вас по голосу.
         </div>
         <button
           onClick={onFind}
