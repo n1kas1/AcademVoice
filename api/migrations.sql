@@ -45,3 +45,17 @@ create table if not exists reports (
   reason       text not null,
   created_at   timestamptz not null default now()
 );
+
+-- === Аналитика (Retention Engine, Этап 0) ===
+-- Лёгкий лог событий для воронки и retention. Намеренно БЕЗ FK на users,
+-- чтобы логирование никогда не падало (например, app_open до upsert юзера).
+create table if not exists events (
+  id           bigserial primary key,
+  tg_id        bigint,
+  event_type   text not null,
+  props        jsonb not null default '{}'::jsonb,
+  created_at   timestamptz not null default now()
+);
+
+create index if not exists events_tg_created_idx on events(tg_id, created_at);
+create index if not exists events_type_created_idx on events(event_type, created_at);

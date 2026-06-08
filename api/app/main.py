@@ -27,6 +27,7 @@ from .config import CORS_ORIGINS, LIVEKIT_WS_URL
 from .tg_auth import extract_user_from_header, TgUser
 from .db import init_pool, close_pool, pool
 from .livekit_tokens import make_token
+from .events import log_event
 
 
 # In-memory мьютекс на матчинг. Для горизонтального масштабирования
@@ -164,6 +165,7 @@ def _me_payload(row: dict) -> dict:
 @app.get("/me")
 async def me(u: TgUser = Depends(get_user)):
     row = await upsert_user(u)
+    await log_event(u.id, "app_open", {"has_profile": bool(row.get("faculty"))})
     return _me_payload(row)
 
 
@@ -203,6 +205,7 @@ async def accept_rules(u: TgUser = Depends(get_user)):
 async def match_join(u: TgUser = Depends(get_user)):
     await upsert_user(u)
     await _clean_stale_queue()
+    await log_event(u.id, "queue_join")
 
     async with _match_lock:
         # Уже в активной комнате? (например, peer встал и матчнул нас раньше)
@@ -240,6 +243,9 @@ async def match_join(u: TgUser = Depends(get_user)):
                 call = await c.fetchrow(
                     "select * from calls where room_name=$1", room_name
                 )
+                await log_event(
+                    u.id, "match_success", {"room_name": room_name, "source": "join"}
+                )
                 return await build_match_response(dict(call), u.id)
 
             # Никого — встаём в очередь.
@@ -265,6 +271,9 @@ async def match_poll(u: TgUser = Depends(get_user)):
     if active:
         async with pool().acquire() as c:
             await c.execute("delete from queue where tg_id=$1", u.id)
+        await log_event(
+            u.id, "match_success", {"room_name": active["room_name"], "source": "poll"}
+        )
         return await build_match_response(active, u.id)
     return {"status": "queued"}
 
@@ -289,6 +298,18 @@ async def call_skip(body: SkipBody, u: TgUser = Depends(get_user)):
             "update calls set ended_at = now() where room_name=$1 and ended_at is null",
             body.room_name,
         )
+        dur = await c.fetchval(
+            """
+            select extract(epoch from coalesce(ended_at, now()) - started_at)
+            from calls where room_name=$1
+            """,
+            body.room_name,
+        )
+    await log_event(
+        u.id,
+        "call_complete",
+        {"room_name": body.room_name, "duration_secs": int(dur) if dur is not None else None},
+    )
     return {"ok": True}
 
 
@@ -318,6 +339,16 @@ async def call_reaction(body: ReactionBody, u: TgUser = Depends(get_user)):
             "select * from reactions where room_name=$1", body.room_name
         )
 
+    await log_event(
+        u.id,
+        "reaction",
+        {
+            "room_name": body.room_name,
+            "reaction": body.reaction,
+            "save_contact": body.save_contact,
+        },
+    )
+
     if len(rs) == 2 and all(
         r["reaction"] == "like" and r["save_contact"] for r in rs
     ):
@@ -329,6 +360,7 @@ async def call_reaction(body: ReactionBody, u: TgUser = Depends(get_user)):
                 )
                 call = dict(call_row) if call_row else None
         if call:
+            await log_event(u.id, "mutual_match", {"room_name": body.room_name})
             p = await peer_info(call, u.id)
             return {"mutual": True, "peer_username": p.get("username")}
     return {"mutual": False}
