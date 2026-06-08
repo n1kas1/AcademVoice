@@ -59,3 +59,16 @@ create table if not exists events (
 
 create index if not exists events_tg_created_idx on events(tg_id, created_at);
 create index if not exists events_type_created_idx on events(event_type, created_at);
+
+-- === Push-инфраструктура (Retention Engine, Этап 1) ===
+-- Согласие на личные сообщения от бота (Telegram requestWriteAccess) + анти-спам метка.
+alter table users add column if not exists allow_pm boolean not null default false;
+alter table users add column if not exists last_pushed_at timestamptz;
+
+-- Журнал отправленных push для идемпотентности (один (tg_id, dedup_key) — один раз).
+create table if not exists push_log (
+  tg_id       bigint not null,
+  dedup_key   text not null,
+  sent_at     timestamptz not null default now(),
+  primary key (tg_id, dedup_key)
+);

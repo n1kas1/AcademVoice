@@ -28,6 +28,7 @@ from .tg_auth import extract_user_from_header, TgUser
 from .db import init_pool, close_pool, pool
 from .livekit_tokens import make_token
 from .events import log_event
+from . import notify
 
 
 # In-memory мьютекс на матчинг. Для горизонтального масштабирования
@@ -58,6 +59,7 @@ def get_user(authorization: str = Header(default="")) -> TgUser:
 async def lifespan(app: FastAPI):
     await init_pool()
     yield
+    await notify.close_client()
     await close_pool()
 
 
@@ -159,6 +161,7 @@ def _me_payload(row: dict) -> dict:
         "course": row.get("course"),
         # Bool-флаг достаточен фронту для роутинга, точную дату не отдаём.
         "rules_accepted": row.get("rules_accepted_at") is not None,
+        "allow_pm": row.get("allow_pm", False),
     }
 
 
@@ -197,6 +200,15 @@ async def accept_rules(u: TgUser = Depends(get_user)):
         )
     row = await get_user_row(u.id)
     return _me_payload(row)
+
+
+@app.post("/me/allow-pm")
+async def allow_pm(u: TgUser = Depends(get_user)):
+    """Юзер разрешил боту писать ему (Telegram requestWriteAccess). Идемпотентно."""
+    await upsert_user(u)
+    async with pool().acquire() as c:
+        await c.execute("update users set allow_pm=true where tg_id=$1", u.id)
+    return {"ok": True}
 
 
 # ============ /match ============

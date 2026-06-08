@@ -13,3 +13,6 @@ CORS_ORIGINS = [
     for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
     if o.strip()
 ]
+
+# Глобальный рубильник push-уведомлений (отключить без правок кода: PUSH_ENABLED=0).
+PUSH_ENABLED = os.getenv("PUSH_ENABLED", "1") == "1"
