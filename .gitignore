@@ -16,3 +16,6 @@ __pycache__/
 # Node / Vite
 node_modules/
 dist/
+
+# локальный деплой-скрипт (содержит адрес сервера)
+/deploy.sh
