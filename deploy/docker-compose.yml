@@ -36,7 +36,22 @@ services:
       - caddy_config:/config
     depends_on:
       - api
+    # web (Caddy) обслуживает и academ4i.duckdns.org -> academ4i-backend:8000.
+    # 'default' указан явно намеренно: как только у сервиса появляется секция networks,
+    # автоподключение к default отключается, и без него web потеряет связь с api.
+    networks:
+      - default
+      - academ4i
 
 volumes:
   caddy_data:
   caddy_config:
+
+networks:
+  # Сеть academ4i_default создаётся СОСЕДНИМ проектом academ4i (/root/academ4i).
+  # Подключаемся к ней как external, чтобы Caddy резолвил academ4i-backend.
+  # ВАЖНО: стек academ4i должен быть запущен ДО деплоя academ-voice,
+  # иначе 'docker compose up' упадёт fail-fast (см. guard в deploy.sh).
+  academ4i:
+    external: true
+    name: academ4i_default
