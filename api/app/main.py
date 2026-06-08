@@ -100,6 +100,26 @@ async def get_user_row(tg_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
+async def touch_streak(tg_id: int) -> None:
+    """Обновляет стрик ежедневного возврата (TZ Europe/Moscow). Идемпотентно за день."""
+    async with pool().acquire() as c:
+        await c.execute(
+            """
+            update users set
+              streak_count = case
+                when streak_day = (now() at time zone 'Europe/Moscow')::date
+                  then streak_count
+                when streak_day = (now() at time zone 'Europe/Moscow')::date - 1
+                  then streak_count + 1
+                else 1
+              end,
+              streak_day = (now() at time zone 'Europe/Moscow')::date
+            where tg_id = $1
+            """,
+            tg_id,
+        )
+
+
 async def find_active_call(tg_id: int) -> Optional[dict]:
     """Активный звонок этого юзера (если есть)."""
     async with pool().acquire() as c:
@@ -145,6 +165,35 @@ async def build_match_response(call: dict, me_tg_id: int) -> dict:
     }
 
 
+async def _notify_mutual(call: dict) -> None:
+    """Push обоим участникам о взаимной симпатии — догоняет того, кто уже вышел из апп."""
+    room = call["room_name"]
+    a_id, b_id = call["a_tg_id"], call["b_tg_id"]
+    a = await get_user_row(a_id) or {}
+    b = await get_user_row(b_id) or {}
+
+    def _text(peer: dict) -> str:
+        un = peer.get("username")
+        if un:
+            return (
+                "💞 Взаимная симпатия в Академ.voice!\n"
+                f"Вы оба отправили сердечко — напишите собеседнику: t.me/{un}"
+            )
+        name = peer.get("first_name") or "собеседник"
+        return (
+            "💞 Взаимная симпатия в Академ.voice!\n"
+            f"Вы с {name} оба отправили сердечко. Откройте приложение, чтобы продолжить."
+        )
+
+    # respect_cap=False: транзакционный push (заслуженный), но push_log не даст дубля.
+    await notify.push_user(
+        a_id, _text(b), "mutual", dedup_key=f"mutual:{room}", respect_cap=False
+    )
+    await notify.push_user(
+        b_id, _text(a), "mutual", dedup_key=f"mutual:{room}", respect_cap=False
+    )
+
+
 # ============ /me ============
 
 class ProfilePatch(BaseModel):
@@ -162,12 +211,15 @@ def _me_payload(row: dict) -> dict:
         # Bool-флаг достаточен фронту для роутинга, точную дату не отдаём.
         "rules_accepted": row.get("rules_accepted_at") is not None,
         "allow_pm": row.get("allow_pm", False),
+        "streak": row.get("streak_count", 0),
     }
 
 
 @app.get("/me")
 async def me(u: TgUser = Depends(get_user)):
-    row = await upsert_user(u)
+    await upsert_user(u)
+    await touch_streak(u.id)
+    row = await get_user_row(u.id)
     await log_event(u.id, "app_open", {"has_profile": bool(row.get("faculty"))})
     return _me_payload(row)
 
@@ -226,12 +278,34 @@ async def match_join(u: TgUser = Depends(get_user)):
             return await build_match_response(active, u.id)
 
         async with pool().acquire() as c:
-            # Берём первого ждущего, не я.
+            # Первый ждущий (не я), исключая тех, с кем недавно говорили:
+            # пара заблокирована, пока у КАЖДОГО calls_count не вырос на >=4
+            # относительно снимка на момент последней встречи.
             waiting = await c.fetchrow(
                 """
-                select tg_id from queue
-                where tg_id <> $1
-                order by joined_at
+                select q.tg_id
+                from queue q
+                join users me   on me.tg_id   = $1
+                join users them on them.tg_id = q.tg_id
+                where q.tg_id <> $1
+                  and not exists (
+                    select 1 from (
+                      select a_tg_id, b_tg_id, a_calls_at, b_calls_at
+                      from calls
+                      where ((a_tg_id = $1 and b_tg_id = q.tg_id)
+                          or (b_tg_id = $1 and a_tg_id = q.tg_id))
+                        and a_calls_at is not null and b_calls_at is not null
+                      order by started_at desc
+                      limit 1
+                    ) last
+                    where (me.calls_count
+                           - case when last.a_tg_id = $1 then last.a_calls_at
+                                  else last.b_calls_at end) < 4
+                       or (them.calls_count
+                           - case when last.a_tg_id = q.tg_id then last.a_calls_at
+                                  else last.b_calls_at end) < 4
+                  )
+                order by q.joined_at
                 limit 1
                 """,
                 u.id,
@@ -244,13 +318,26 @@ async def match_join(u: TgUser = Depends(get_user)):
                     "delete from queue where tg_id = any($1::bigint[])",
                     [peer_id, u.id],
                 )
+                # Счётчик звонков обоим +1 и снимок для anti-rematch («4 звонка у каждого»).
+                await c.execute(
+                    "update users set calls_count = calls_count + 1 "
+                    "where tg_id = any($1::bigint[])",
+                    [peer_id, u.id],
+                )
+                snaps = {
+                    r["tg_id"]: r["calls_count"]
+                    for r in await c.fetch(
+                        "select tg_id, calls_count from users where tg_id = any($1::bigint[])",
+                        [peer_id, u.id],
+                    )
+                }
                 room_name = f"r_{uuid.uuid4().hex[:10]}"
                 await c.execute(
                     """
-                    insert into calls (room_name, a_tg_id, b_tg_id)
-                    values ($1, $2, $3)
+                    insert into calls (room_name, a_tg_id, b_tg_id, a_calls_at, b_calls_at)
+                    values ($1, $2, $3, $4, $5)
                     """,
-                    room_name, peer_id, u.id,
+                    room_name, peer_id, u.id, snaps.get(peer_id), snaps.get(u.id),
                 )
                 call = await c.fetchrow(
                     "select * from calls where room_name=$1", room_name
@@ -373,6 +460,7 @@ async def call_reaction(body: ReactionBody, u: TgUser = Depends(get_user)):
                 call = dict(call_row) if call_row else None
         if call:
             await log_event(u.id, "mutual_match", {"room_name": body.room_name})
+            await _notify_mutual(call)
             p = await peer_info(call, u.id)
             return {"mutual": True, "peer_username": p.get("username")}
     return {"mutual": False}

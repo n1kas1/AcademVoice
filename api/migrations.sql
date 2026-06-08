@@ -72,3 +72,16 @@ create table if not exists push_log (
   sent_at     timestamptz not null default now(),
   primary key (tg_id, dedup_key)
 );
+
+-- === Anti-rematch по счётчику звонков + стрик (Этап 3) ===
+-- calls_count: сколько всего звонков у юзера (растёт при каждом матче).
+-- В calls сохраняем снимок счётчиков обоих на момент звонка — пара не сматчится
+-- снова, пока у каждого calls_count не вырастет на >=4 относительно снимка.
+alter table users add column if not exists calls_count int not null default 0;
+alter table calls add column if not exists a_calls_at int;
+alter table calls add column if not exists b_calls_at int;
+create index if not exists calls_pair_idx on calls(a_tg_id, b_tg_id, started_at);
+
+-- Стрик ежедневного возврата (считается в TZ Europe/Moscow на app_open).
+alter table users add column if not exists streak_count int not null default 0;
+alter table users add column if not exists streak_day date;
