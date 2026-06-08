@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# Окружение и секреты — НЕ коммитим
+.env
+.env.local
+**/.env
+# примеры конфигов оставляем в репозитории
+!.env.example
+!**/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Node / Vite
+node_modules/
+dist/

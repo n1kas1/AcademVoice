@@ -1,12 +1,6 @@
-# Caddy: фронт-статика на / + проксирование API-эндпоинтов на сервис api.
-# Домен берётся из env API_DOMAIN (см. docker-compose).
-# При первом запуске Caddy сам получит Let's Encrypt сертификат.
-
+# === academvoice ===
 {$API_DOMAIN} {
     encode zstd gzip
-
-    # Эндпоинты бэка — проксируем по их реальным путям без перепрефикса.
-    # /me/* нужен для /me/accept-rules; /stats — для соц-пруфа на Searching.
     @api path /me /me/* /match/* /call/* /health /stats
     handle @api {
         reverse_proxy api:8000 {
@@ -15,12 +9,21 @@
             header_up X-Forwarded-Proto {scheme}
         }
     }
-
-    # Всё остальное — SPA-фронт.
     handle {
         root * /srv
         encode zstd gzip
         try_files {path} /index.html
         file_server
+    }
+}
+
+# === academ4i (Telegram бот-репетитор) ===
+academ4i.duckdns.org {
+    encode zstd gzip
+    reverse_proxy academ4i-backend:8000
+    header {
+        Strict-Transport-Security "max-age=31536000;"
+        X-Content-Type-Options "nosniff"
+        -Server
     }
 }
