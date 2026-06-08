@@ -1,5 +1,7 @@
+import { useEffect, useState } from "react";
 import { useStore } from "../lib/store";
-import { apiJoinQueue } from "../lib/api";
+import { apiJoinQueue, apiStats, type StatsResponse } from "../lib/api";
+import { plural } from "../lib/format";
 import WebApp from "@twa-dev/sdk";
 import Footer from "../components/Footer";
 
@@ -7,6 +9,13 @@ export default function Home() {
   const profile = useStore((s) => s.profile);
   const setScreen = useStore((s) => s.setScreen);
   const setCall = useStore((s) => s.setCall);
+  const [stats, setStats] = useState<StatsResponse | null>(null);
+
+  useEffect(() => {
+    apiStats()
+      .then(setStats)
+      .catch(() => {});
+  }, []);
 
   const onFind = async () => {
     setScreen("searching");
@@ -46,6 +55,20 @@ export default function Home() {
         <div className="text-center text-muted max-w-xs">
           Жми — мы найдём собеседника из Академии и соединим вас по голосу.
         </div>
+        {stats &&
+          (stats.queue_size > 0 ? (
+            <div className="text-sm text-center text-muted">
+              Сейчас в очереди{" "}
+              <span className="text-fg font-semibold">{stats.queue_size}</span>{" "}
+              {plural(stats.queue_size, "человек", "человека", "человек")} · за час{" "}
+              <span className="text-fg font-semibold">{stats.calls_last_hour}</span>{" "}
+              {plural(stats.calls_last_hour, "звонок", "звонка", "звонков")}
+            </div>
+          ) : (
+            <div className="text-sm text-center text-muted">
+              Будь первым — мы позовём, как только кто-то зайдёт 🔔
+            </div>
+          ))}
         <button
           onClick={onFind}
           className="bg-accent text-white rounded-full px-10 py-5 text-lg font-semibold shadow-lg active:scale-95 transition"

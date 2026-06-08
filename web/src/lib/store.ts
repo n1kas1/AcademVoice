@@ -16,6 +16,8 @@ export interface Profile {
   faculty?: string;
   course?: string;
   rulesAccepted?: boolean;
+  allowPm?: boolean;
+  streak?: number;
 }
 
 export interface CallSession {
@@ -31,6 +33,8 @@ export interface CallSession {
   // (либо во время звонка, либо при перепроверке на экране AfterCall).
   mutual?: boolean;
   mutualUsername?: string;
+  // Длительность звонка в секундах (для анти-разочарования на AfterCall).
+  callDurationSecs?: number;
 }
 
 interface State {

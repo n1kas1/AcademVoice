@@ -1,11 +1,18 @@
 import { useEffect, useState } from "react";
+import WebApp from "@twa-dev/sdk";
 import { useStore } from "../lib/store";
-import { apiCallResult } from "../lib/api";
+import { apiCallResult, apiAllowPm } from "../lib/api";
+import { plural } from "../lib/format";
+
+// Разрешение боту писать спрашиваем максимум раз за загрузку приложения.
+let writeAccessAsked = false;
 
 export default function AfterCall() {
   const call = useStore((s) => s.call);
   const setCall = useStore((s) => s.setCall);
   const setScreen = useStore((s) => s.setScreen);
+  const profile = useStore((s) => s.profile);
+  const patchProfile = useStore((s) => s.patchProfile);
 
   const [mutualUsername, setMutualUsername] = useState<string | undefined>(
     call?.mutual ? call.mutualUsername : undefined
@@ -28,6 +35,27 @@ export default function AfterCall() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // После звонка деликатно просим разрешение боту писать — чтобы уведомить
+  // о взаимной симпатии, если собеседник ответит сердечком позже. Раз за сессию.
+  useEffect(() => {
+    if (writeAccessAsked || profile?.allowPm) return;
+    const wa = WebApp as unknown as {
+      requestWriteAccess?: (cb: (granted: boolean) => void) => void;
+    };
+    if (typeof wa.requestWriteAccess !== "function") return;
+    writeAccessAsked = true;
+    const t = setTimeout(() => {
+      wa.requestWriteAccess!((granted) => {
+        if (granted) {
+          apiAllowPm().catch(() => {});
+          patchProfile({ allowPm: true });
+        }
+      });
+    }, 1200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   if (!call) {
     setScreen("home");
     return null;
@@ -37,6 +65,10 @@ export default function AfterCall() {
     setCall(null);
     setScreen("home");
   };
+
+  const streak = profile?.streak ?? 0;
+  // Короткий звонок без взаимности — подбадриваем, а не «не совпало».
+  const isTooShort = !mutualUsername && (call.callDurationSecs ?? 99) < 15;
 
   return (
     <div className="flex-1 flex flex-col p-6 gap-6">
@@ -56,13 +88,23 @@ export default function AfterCall() {
         </div>
       ) : (
         <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center">
-          <div className="text-5xl">👋</div>
-          <div className="text-xl font-semibold">Разговор завершён</div>
-          <div className="text-muted max-w-xs">
-            {checked
-              ? "В этот раз не совпало. Найдём ещё кого-нибудь?"
-              : "Проверяем результаты…"}
+          <div className="text-5xl">{isTooShort ? "🙂" : "👋"}</div>
+          <div className="text-xl font-semibold">
+            {isTooShort ? "Коротко вышло" : "Разговор завершён"}
           </div>
+          <div className="text-muted max-w-xs">
+            {!checked
+              ? "Проверяем результаты…"
+              : isTooShort
+              ? "Бывает! Следующий собеседник может оказаться куда интереснее."
+              : "В этот раз не совпало. Найдём ещё кого-нибудь?"}
+          </div>
+        </div>
+      )}
+
+      {streak > 1 && (
+        <div className="text-center text-sm text-muted">
+          🔥 {streak} {plural(streak, "день", "дня", "дней")} подряд
         </div>
       )}
 

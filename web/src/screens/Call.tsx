@@ -13,6 +13,7 @@ export default function Call() {
   const peerAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const [secs, setSecs] = useState(0);
+  const secsRef = useRef(0); // актуальная длительность для замыканий (onPeerLeft/finish)
   const [muted, setMuted] = useState(false);
   const [connecting, setConnecting] = useState(true);
   const [liked, setLiked] = useState(false); // нажал ли я сердечко
@@ -36,6 +37,7 @@ export default function Call() {
             try {
               await apiSkip(call.roomName);
             } catch {}
+            setCall({ ...call, callDurationSecs: secsRef.current });
             setScreen("aftercall");
           }
         );
@@ -52,7 +54,14 @@ export default function Call() {
       }
     })();
 
-    const t = window.setInterval(() => setSecs((x) => x + 1), 1000);
+    const t = window.setInterval(
+      () =>
+        setSecs((x) => {
+          secsRef.current = x + 1;
+          return x + 1;
+        }),
+      1000
+    );
     return () => {
       alive = false;
       clearInterval(t);
@@ -71,6 +80,7 @@ export default function Call() {
     try {
       await apiSkip(call.roomName);
     } catch {}
+    setCall({ ...call, callDurationSecs: secsRef.current });
     setScreen("aftercall");
     void intent; // intent пока не различаем поведенчески
   };

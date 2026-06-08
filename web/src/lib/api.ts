@@ -30,6 +30,8 @@ export interface MeResponse {
   faculty?: string;
   course?: string;
   rules_accepted: boolean;
+  allow_pm: boolean;
+  streak: number;
 }
 
 export const apiMe = () => req<MeResponse>("/me");
@@ -39,6 +41,10 @@ export const apiUpdateProfile = (p: { faculty: string; course: string }) =>
 
 export const apiAcceptRules = () =>
   req<MeResponse>("/me/accept-rules", { method: "POST" });
+
+// Юзер разрешил боту писать (Telegram requestWriteAccess) — сохраняем на бэке.
+export const apiAllowPm = () =>
+  req<{ ok: true }>("/me/allow-pm", { method: "POST" });
 
 // === Matching ===
 

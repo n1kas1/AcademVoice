@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../lib/store";
 import { apiPoll, apiLeaveQueue, apiStats, type StatsResponse } from "../lib/api";
+import { plural } from "../lib/format";
 
 export default function Searching() {
   const setScreen = useStore((s) => s.setScreen);
@@ -107,14 +108,4 @@ export default function Searching() {
       </button>
     </div>
   );
-}
-
-// Русские склонения по числу. Лучше чем "2 человеков".
-function plural(n: number, one: string, few: string, many: string): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod100 >= 11 && mod100 <= 14) return many;
-  if (mod10 === 1) return one;
-  if (mod10 >= 2 && mod10 <= 4) return few;
-  return many;
 }

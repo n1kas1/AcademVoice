@@ -32,6 +32,8 @@ export default function App() {
           faculty: me.faculty,
           course: me.course,
           rulesAccepted: me.rules_accepted,
+          allowPm: me.allow_pm,
+          streak: me.streak,
         });
         // Маршрутизация:
         //   правила не приняты      → Rules
