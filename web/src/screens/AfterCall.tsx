@@ -43,12 +43,17 @@ export default function AfterCall() {
       requestWriteAccess?: (cb: (granted: boolean) => void) => void;
     };
     if (typeof wa.requestWriteAccess !== "function") return;
-    writeAccessAsked = true;
     const t = setTimeout(() => {
+      // Флаг ставим в момент реального показа промпта (а не на монтировании):
+      // иначе быстрый уход «Следующий» до 1200мс съел бы единственную попытку за сессию.
+      writeAccessAsked = true;
       wa.requestWriteAccess!((granted) => {
         if (granted) {
-          apiAllowPm().catch(() => {});
-          patchProfile({ allowPm: true });
+          // allowPm локально — только после успешного сохранения на бэке,
+          // иначе фронт/бэк рассинхронятся и mutual-push не уйдёт.
+          apiAllowPm()
+            .then(() => patchProfile({ allowPm: true }))
+            .catch(() => {});
         }
       });
     }, 1200);

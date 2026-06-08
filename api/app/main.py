@@ -186,12 +186,20 @@ async def _notify_mutual(call: dict) -> None:
         )
 
     # respect_cap=False: транзакционный push (заслуженный), но push_log не даст дубля.
-    await notify.push_user(
-        a_id, _text(b), "mutual", dedup_key=f"mutual:{room}", respect_cap=False
-    )
-    await notify.push_user(
-        b_id, _text(a), "mutual", dedup_key=f"mutual:{room}", respect_cap=False
-    )
+    # Обоим параллельно; try/except — т.к. зовётся как orphaned task (create_task).
+    try:
+        await asyncio.gather(
+            notify.push_user(
+                a_id, _text(b), "mutual", dedup_key=f"mutual:{room}", respect_cap=False
+            ),
+            notify.push_user(
+                b_id, _text(a), "mutual", dedup_key=f"mutual:{room}", respect_cap=False
+            ),
+        )
+    except Exception as e:  # noqa: BLE001
+        import sys
+
+        print(f"[mutual] notify error room={room}: {e}", file=sys.stderr)
 
 
 # ============ /me ============
@@ -220,6 +228,8 @@ async def me(u: TgUser = Depends(get_user)):
     await upsert_user(u)
     await touch_streak(u.id)
     row = await get_user_row(u.id)
+    if row is None:  # практически недостижимо: юзер только что upsert-нут в этом же запросе
+        raise HTTPException(404, "user not found")
     await log_event(u.id, "app_open", {"has_profile": bool(row.get("faculty"))})
     return _me_payload(row)
 
@@ -460,7 +470,8 @@ async def call_reaction(body: ReactionBody, u: TgUser = Depends(get_user)):
                 call = dict(call_row) if call_row else None
         if call:
             await log_event(u.id, "mutual_match", {"room_name": body.room_name})
-            await _notify_mutual(call)
+            # Не блокируем ответ на медленном Telegram API — пушим в фоне.
+            asyncio.create_task(_notify_mutual(call))
             p = await peer_info(call, u.id)
             return {"mutual": True, "peer_username": p.get("username")}
     return {"mutual": False}

@@ -37,7 +37,9 @@ export default function Call() {
             try {
               await apiSkip(call.roomName);
             } catch {}
-            setCall({ ...call, callDurationSecs: secsRef.current });
+            // Актуальный call из стора (в замыкании он мог устареть после mutual).
+            const cur = useStore.getState().call;
+            if (cur) setCall({ ...cur, callDurationSecs: secsRef.current });
             setScreen("aftercall");
           }
         );
@@ -71,7 +73,10 @@ export default function Call() {
         peerAudioRef.current = null;
       }
     };
-  }, [call, setScreen]);
+    // dep — только roomName: мутации call (mutual/duration) НЕ должны пересоздавать
+    // LiveKit-комнату, иначе тап сердечка рвёт звук. Connection-поля в звонке неизменны.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [call?.roomName, setScreen]);
 
   if (!call) return null;
 

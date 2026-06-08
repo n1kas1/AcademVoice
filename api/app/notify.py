@@ -123,6 +123,18 @@ async def push_user(
             await log_event(tg_id, "push_sent", {"kind": kind})
         except Exception as e:  # noqa: BLE001
             print(f"[notify] push_user postlog error {tg_id}: {e}", file=sys.stderr)
+    elif dedup_key:
+        # Отправка не удалась (таймаут/429/5xx/403) — освобождаем занятый ключ,
+        # иначе ретрай этого же push молча отсёкся бы навсегда (потеря mutual-push).
+        try:
+            async with pool().acquire() as c:
+                await c.execute(
+                    "delete from push_log where tg_id=$1 and dedup_key=$2",
+                    tg_id,
+                    dedup_key,
+                )
+        except Exception as e:  # noqa: BLE001
+            print(f"[notify] push_user dedup release error {tg_id}: {e}", file=sys.stderr)
     return ok
 
 
