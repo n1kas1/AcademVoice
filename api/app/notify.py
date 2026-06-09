@@ -6,6 +6,7 @@ Push-уведомления через Telegram Bot API (sendMessage).
 """
 
 import sys
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -17,7 +18,17 @@ from .events import log_event
 _API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
 # Частотный кап для НЕ-транзакционных push (реактивация): не чаще раза в ~20ч.
-_REACT_CAP = "20 hours"
+_REACT_CAP = timedelta(hours=20)
+
+
+def mutual_text(peer: dict) -> str:
+    """Текст push о взаимной симпатии (peer — собеседник получателя)."""
+    head = "💞 Взаимная симпатия в Академ.voice!\n"
+    un = peer.get("username")
+    if un:
+        return head + f"Вы оба отправили сердечко — напишите собеседнику: t.me/{un}"
+    name = peer.get("first_name") or "собеседник"
+    return head + f"Вы с {name} оба отправили сердечко. Откройте приложение, чтобы продолжить."
 
 _client: Optional[httpx.AsyncClient] = None
 
@@ -92,12 +103,9 @@ async def push_user(
             if not row or not row["allow_pm"]:
                 return False
             if respect_cap and row["last_pushed_at"] is not None:
-                capped = await c.fetchval(
-                    f"select last_pushed_at > now() - interval '{_REACT_CAP}' "
-                    "from users where tg_id=$1",
-                    tg_id,
-                )
-                if capped:
+                # last_pushed_at — timestamptz → aware datetime; сравниваем в Python,
+                # без второго запроса и без интервала-строки в SQL.
+                if row["last_pushed_at"] > datetime.now(timezone.utc) - _REACT_CAP:
                     return False
             # Идемпотентность: занимаем (tg_id, dedup_key); если занят — уже слали.
             if dedup_key:
@@ -136,8 +144,3 @@ async def push_user(
         except Exception as e:  # noqa: BLE001
             print(f"[notify] push_user dedup release error {tg_id}: {e}", file=sys.stderr)
     return ok
-
-
-async def send_message(tg_id: int, text: str) -> bool:
-    """Прямая отправка без проверок согласия/капа — для smoke-теста связности с Bot API."""
-    return await _send(tg_id, text)

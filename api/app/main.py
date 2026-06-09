@@ -14,6 +14,8 @@ Academ.voice API — FastAPI + asyncpg + LiveKit Server SDK.
 Аутентификация — заголовок `Authorization: tma <telegram_initData>`.
 """
 
+import os
+import sys
 import uuid
 import asyncio
 from typing import Optional
@@ -37,6 +39,10 @@ _match_lock = asyncio.Lock()
 
 # Записи старше этого срока — выбрасываем из очереди, считая что вкладка закрылась.
 QUEUE_TTL_SECONDS = 60
+
+# Пара не сматчится снова, пока у КАЖДОГО calls_count не вырос на >= этого числа
+# с последней встречи (anti-rematch «N звонков у каждого»). Продуктовый тюнинг.
+REMATCH_GAP_CALLS = int(os.getenv("REMATCH_GAP_CALLS", "4"))
 
 
 async def _clean_stale_queue() -> None:
@@ -100,10 +106,10 @@ async def get_user_row(tg_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
-async def touch_streak(tg_id: int) -> None:
-    """Обновляет стрик ежедневного возврата (TZ Europe/Moscow). Идемпотентно за день."""
+async def touch_streak(tg_id: int) -> Optional[dict]:
+    """Обновляет стрик ежедневного возврата (TZ Europe/Moscow) и возвращает свежую строку."""
     async with pool().acquire() as c:
-        await c.execute(
+        row = await c.fetchrow(
             """
             update users set
               streak_count = case
@@ -115,9 +121,11 @@ async def touch_streak(tg_id: int) -> None:
               end,
               streak_day = (now() at time zone 'Europe/Moscow')::date
             where tg_id = $1
+            returning *
             """,
             tg_id,
         )
+    return dict(row) if row else None
 
 
 async def find_active_call(tg_id: int) -> Optional[dict]:
@@ -169,36 +177,29 @@ async def _notify_mutual(call: dict) -> None:
     """Push обоим участникам о взаимной симпатии — догоняет того, кто уже вышел из апп."""
     room = call["room_name"]
     a_id, b_id = call["a_tg_id"], call["b_tg_id"]
-    a = await get_user_row(a_id) or {}
-    b = await get_user_row(b_id) or {}
-
-    def _text(peer: dict) -> str:
-        un = peer.get("username")
-        if un:
-            return (
-                "💞 Взаимная симпатия в Академ.voice!\n"
-                f"Вы оба отправили сердечко — напишите собеседнику: t.me/{un}"
+    async with pool().acquire() as c:
+        rows = {
+            r["tg_id"]: dict(r)
+            for r in await c.fetch(
+                "select * from users where tg_id = any($1::bigint[])", [a_id, b_id]
             )
-        name = peer.get("first_name") or "собеседник"
-        return (
-            "💞 Взаимная симпатия в Академ.voice!\n"
-            f"Вы с {name} оба отправили сердечко. Откройте приложение, чтобы продолжить."
-        )
+        }
+    a, b = rows.get(a_id, {}), rows.get(b_id, {})
 
     # respect_cap=False: транзакционный push (заслуженный), но push_log не даст дубля.
     # Обоим параллельно; try/except — т.к. зовётся как orphaned task (create_task).
     try:
         await asyncio.gather(
             notify.push_user(
-                a_id, _text(b), "mutual", dedup_key=f"mutual:{room}", respect_cap=False
+                a_id, notify.mutual_text(b), "mutual",
+                dedup_key=f"mutual:{room}", respect_cap=False,
             ),
             notify.push_user(
-                b_id, _text(a), "mutual", dedup_key=f"mutual:{room}", respect_cap=False
+                b_id, notify.mutual_text(a), "mutual",
+                dedup_key=f"mutual:{room}", respect_cap=False,
             ),
         )
     except Exception as e:  # noqa: BLE001
-        import sys
-
         print(f"[mutual] notify error room={room}: {e}", file=sys.stderr)
 
 
@@ -226,11 +227,11 @@ def _me_payload(row: dict) -> dict:
 @app.get("/me")
 async def me(u: TgUser = Depends(get_user)):
     await upsert_user(u)
-    await touch_streak(u.id)
-    row = await get_user_row(u.id)
+    row = await touch_streak(u.id)  # returning * — заодно отдаёт свежую строку
     if row is None:  # практически недостижимо: юзер только что upsert-нут в этом же запросе
         raise HTTPException(404, "user not found")
-    await log_event(u.id, "app_open", {"has_profile": bool(row.get("faculty"))})
+    # Аналитика не на пути ответа (hot-path старта): фоном, ошибки она глотает сама.
+    asyncio.create_task(log_event(u.id, "app_open", {"has_profile": bool(row.get("faculty"))}))
     return _me_payload(row)
 
 
@@ -310,15 +311,16 @@ async def match_join(u: TgUser = Depends(get_user)):
                     ) last
                     where (me.calls_count
                            - case when last.a_tg_id = $1 then last.a_calls_at
-                                  else last.b_calls_at end) < 4
+                                  else last.b_calls_at end) < $2
                        or (them.calls_count
                            - case when last.a_tg_id = q.tg_id then last.a_calls_at
-                                  else last.b_calls_at end) < 4
+                                  else last.b_calls_at end) < $2
                   )
                 order by q.joined_at
                 limit 1
                 """,
                 u.id,
+                REMATCH_GAP_CALLS,
             )
 
             if waiting:
@@ -328,29 +330,23 @@ async def match_join(u: TgUser = Depends(get_user)):
                     "delete from queue where tg_id = any($1::bigint[])",
                     [peer_id, u.id],
                 )
-                # Счётчик звонков обоим +1 и снимок для anti-rematch («4 звонка у каждого»).
-                await c.execute(
-                    "update users set calls_count = calls_count + 1 "
-                    "where tg_id = any($1::bigint[])",
-                    [peer_id, u.id],
-                )
+                # Счётчик звонков обоим +1 со снимком (anti-rematch «N звонков у каждого»).
                 snaps = {
                     r["tg_id"]: r["calls_count"]
                     for r in await c.fetch(
-                        "select tg_id, calls_count from users where tg_id = any($1::bigint[])",
+                        "update users set calls_count = calls_count + 1 "
+                        "where tg_id = any($1::bigint[]) returning tg_id, calls_count",
                         [peer_id, u.id],
                     )
                 }
                 room_name = f"r_{uuid.uuid4().hex[:10]}"
-                await c.execute(
+                call = await c.fetchrow(
                     """
                     insert into calls (room_name, a_tg_id, b_tg_id, a_calls_at, b_calls_at)
                     values ($1, $2, $3, $4, $5)
+                    returning *
                     """,
                     room_name, peer_id, u.id, snaps.get(peer_id), snaps.get(u.id),
-                )
-                call = await c.fetchrow(
-                    "select * from calls where room_name=$1", room_name
                 )
                 await log_event(
                     u.id, "match_success", {"room_name": room_name, "source": "join"}
